@@ -1,0 +1,137 @@
+---
+title: "Practical Machine Learning: Prediction Project"
+---
+Author: Surya Gurung  
+19th November, 2016
+
+## Executive Summary
+In this project, I analysed the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The five different ways are classified as exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). These classifications are recored under variable 'classe'. The goal of this project is to build a model to predict the manner (one of the 5 ways) in which they did the exercise using the training data and use the prediction model to predict 20 different test cases in test data. The training data for this project are downloaded from [this site](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+and test data are downloaded from [here.](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) 
+
+First, I cleaned both data sets by removing variables with more than 70% 'NA' values and near zero variance. I also removed first two columns since they are irrelevent variables. The train data set is divided into two subsets. The bigger subset is the training set which is used to build the prediction models. The smaller subset is used as a validation set to find the accuracy of the prediction models before it is used for the test data set. I built a decision tree model using rpart function with training data subset and used the model to predict on the test subset. Similary, I built a random forest prediction model with 3-fold cross-validation to select optimal parameters for the model. The accuracy of decision tree model is 0.8646 where as the random forest prediction model has accuracy of 0.9997. So, I chose the random forest model to predict on the test data set.  
+
+## Loading and Preprocessing the data
+  
+#### Loading necessary libraries and the project data:
+```{r}
+options(warn = -1)
+library(ggplot2)
+library(caret)
+library(rattle)
+library(rpart.plot)
+
+# sets working director as '~/rprojects'. If it doesn't exit, it creates one.
+if (file.exists('~/rprojects')){
+    setwd('~/rprojects') 
+}else {
+    dir.create('~/rprojects')
+    setwd('~/rprojects') 
+}
+
+trainingFile = "pmlTraining.csv"
+testFile = "pmlTesting.csv"
+
+# if the data is not downloaded yet, downloads the csv file from given url.
+if (!file.exists(trainingFile)){
+    fileURL <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+    download.file(fileURL, destfile = trainingFile, method='curl')
+}  
+if (!file.exists(testFile)){
+    fileURL <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+    download.file(fileURL, destfile = testFile, method='curl')
+} 
+
+trainData <- read.csv('pmlTraining.csv', na.strings = 'NA')
+testData <- read.csv('pmlTesting.csv', na.strings = 'NA')
+```
+  
+#### Preprocessing the training and testing data:
+```{r, results='hide'}
+names(trainData) # results not shown here
+head(trainData)  # results not shown here
+```  
+By inspecting the variables as above, first two variables ('X' and 'user_name') seems irrelavent. So, lets get ride of these two columns from both data sets.
+```{r}
+trainData <- trainData[ , -(1:2)]
+testData <- testData[ , -(1:2)]
+```  
+
+Some of the varialbles have lots of 'NA' value. So, lets get rid of the variables with more than 70% of its values as 'NA'. Also using nearZeroVar function, lets get ride of columns with near zero variance.
+```{r}
+cleanNACols <- sapply(trainData, function(naCol) mean(is.na(naCol)))
+trainData <- trainData[ ,(cleanNACols > 0.70) == FALSE] # removes cols with more than 70% NAs value
+testData <- testData[ ,(cleanNACols > 0.70) == FALSE] # removes cols with more than 70% NAs value
+
+preObj <- nearZeroVar(trainData, saveMetrics = TRUE)
+trainData <- trainData[ ,preObj$nzv == FALSE]
+testData <- testData[,preObj$nzv == FALSE]
+```
+
+## Building the Models  
+Now, lets build two prediction models:
+
+* Predicting with Decision Tree
+* Predicting with Random Forest
+
+First, lets partition the training data set, **trainData**, into a training set, **trainingSet**, with 70% and a validation set, **cvTestingSet**, with 30% of data so that I can cross-validate the model built on the trainingSet before I can use the model to predict on test data, **testData**.  
+
+```{r}
+set.seed(331)
+
+inTrain <- createDataPartition(y = trainData$classe, p = 0.7, list = FALSE)
+trainingSet <- trainData[inTrain, ]
+cvTestingSet <- trainData[-inTrain, ]
+```
+
+#### Predicting with Decision Tree:
+```{r}
+dtModelFit<-rpart(classe ~ ., data = trainingSet, method = 'class')
+pred <- predict(dtModelFit, cvTestingSet, type = 'class')
+confusionMatrix(pred,cvTestingSet$classe)
+```
+
+#### Predicting with Random Forest:
+```{r}
+tControl <- trainControl(method = 'cv', number = 3)
+rfModelFit <- train(classe ~ ., data = trainingSet, method = 'rf', trControl = tControl)
+rfModelFit$finalModel
+
+pred1 <- predict(rfModelFit, cvTestingSet)
+confusionMatrix(pred1,cvTestingSet$classe)
+```
+From above confusion matrices, we can see the accuracy of decision tree model is 0.8646 where as the random forest prediction model has accuracy of 0.9997. The plotings of decision tree (Figure 1) and random forest error (Figure 2) are listed in Index at the end of this report. So, I am using the random forest model to predict on the test data set.
+
+## Predicting on Test Data  
+Since the random forest prediction model gave way better accuracy, I am using it to predict on the test data set, **testData**. But before doing this, I need to train the model on full training data set, **trainData**, for better accuracy in predicting with **testData**. So, the random forest model is trained again using the full and cleaned train data set, **trainData**.
+
+```{r}
+modelFit <- train(classe ~ ., data = trainData, method = 'rf', trControl = tControl)
+modelFit$finalModel
+
+pred2 <- predict(modelFit, testData)
+#confusionMatrix(pred2,testData$classe)
+``` 
+
+Function to generate a text file of the prediction:
+
+```{r}
+generatePredictionFile <- function(prediction){
+    for (i in 1:length(prediction)){
+        fName <- paste0('problemId_', i, '.txt')
+        write.table(prediction[i], file = fName, quote = FALSE, row.names = FALSE, col.names = FALSE)
+    }
+}
+generatePredictionFile(pred2)
+```
+
+## Index  
+
+(Figure 1)
+```{r}
+fancyRpartPlot(dtModelFit)
+```
+  
+(Figure 2)
+```{r}
+plot(rfModelFit$finalModel)
+```
